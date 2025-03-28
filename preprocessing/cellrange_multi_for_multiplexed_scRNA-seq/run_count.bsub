@@ -1,0 +1,8 @@
+#!/bin/bash
+# BSUB -J cellranger_multi 
+# BSUB -n 10
+# BSUB -M 50GB 
+# BSUB -R "span[hosts=1]"
+# BSUB -q long
+
+/projects/site/pred/ihb-g-deco/TOOLS/cellranger-8.0.0/bin/cellranger multi --id=ITBODI009 --csv=multi_config.csv --localcores=10 --localmem=50
