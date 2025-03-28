@@ -1,0 +1,5 @@
+# BSUB -J GRN 
+# BSUB -n 10
+# BSUB -R "rusage[mem=200G/host]affinity[core(1)*1:cpubind=core:membind=localprefer:distribute=any]"
+
+/home/yuq22/miniconda3/envs/r-kernel/bin/Rscript Script_build_GRN.R
