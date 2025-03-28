@@ -52,4 +52,32 @@ res_mat <- data.frame("Test_anova_P"=dd_test_res$p_ANOVA,
  
 saveRDS(res_mat, file=paste0("Res_Samonella_infection_vs_control_",x,"_differential_detection_test_res.rds"))
 
-  
+ files <- list.files(pattern="Res_Samonella_infection_vs_control_.*_differential_detection_test_res.rds")
+dar_list <- list()
+for(file in files){
+    ct <- sub("_differential_detection_test_res.rds", "", sub("Res_Samonella_infection_vs_control_", "", file))
+    res <- readRDS(file)
+    sal_up_region <- rownames(res)[res$Corrected_anova_P<0.05 & res$Infection_control_prop_diff>0.005] 
+    sal_down_region <- rownames(res)[res$Corrected_anova_P<0.05 & res$Infection_control_prop_diff< -0.005] 
+    dar_list[[paste0(ct,"_up")]] <- sal_up_region
+    dar_list[[paste0(ct,"_down")]] <- sal_down_region
+}
+all_dar_regions <- unique(unlist(dar_list))
+matrix(F, nrow=length(all_dar_regions), ncol=length(dar_list), dimnames=list(all_dar_regions, names(dar_list))) -> dar_matrix
+for(ct in names(dar_list)){
+    dar_matrix[dar_list[[ct]],ct] <- T
+}
+saveRDS(dar_matrix, file="Res_Salmonella_infection_vs_control_DAR_matrix.rds")
+
+# plot the DAR numbers
+size <- sqrt(colSums(dar_matrix))
+size[grep("down", names(size))] <- -size[grep("down", names(size))]
+ct <- sub("_up", "", sub("_down", "", names(size)))
+cols <- readRDS("~/Bacteria_TRM/used_object/cols.rds")
+ct_cols <- cols$cell_type
+pdf("Plot_barplot_DAR_numbers_per_cell_type.pdf", width=5, height=7)
+par(mar=c(10,5,3,3))
+barplot(size[grep("up", names(size))], col=ct_cols[ct[grep("up", names(size))]], main="Salmonella infection induced DARs", las=2, ylim=c(min(size), max(size)), ylab="sqrt(#DAR)", names=ct[grep("up", names(size))])
+barplot(size[grep("down", names(size))], col=ct_cols[ct[grep("down", names(size))]], las=2, add=T, names="", xaxt="n", yaxt="n")
+dev.off()
+ 
