@@ -342,39 +342,37 @@ dev.off()
 plotFeature(seu.obj=chip_gc, dr="umap", genes.to.plot=c("MUC3B"), do.plot=F)
 de_res <- presto::wilcoxauc(chip_gc, group_by="RNA_snn_res.1")
 de_res$pct_diff <- de_res$pct_in - de_res$pct_out
-sig_res <- de_res %>% filter(padj<0.05 & pct_diff>20 & logFC>1)
-genes <- unique(sig_res$feature)
-plotFeature(seu.obj=chip_gc, dr="umap", genes.to.plot=c("CLCA1", "MUC5B"), col.num=2, do.plot=T, plot.name="Plot_UMAP_adult_chip_non_proli_GC_MUC5B_CLCA1.png", nCols=beach.col, per.plot.size=2000, cex=20)
-# generate heatmap of top cluster marker expression
-# get cluster average expression
-cluster_expr <- getAveExpr(seu.obj=chip_gc, feature.to.calc="RNA_snn_res.1")
-saveRDS(cluster_expr, file="Dat_adult_chip_non_proli_GC_cluster_expr.rds")
-cluster_expr <- readRDS("Dat_adult_chip_non_proli_GC_cluster_expr.rds")
-
-expr_mat <- cluster_expr[genes,]
-res <- prepareTreeAndHeatmapInput(expr.mat = expr_mat, hc.method = "ward.D2")
-saveRDS(res, file="Res_non_proli_GC_stringent_cluster_marker_expr_heatmap_input.rds")
-pdf("Plot_heatmap_non_proli_GC_stringent_cluster_marker_expr.pdf", height=10)
-gplots::heatmap.2(res$heatmap_input, col = beach.col.heatmap, trace="none", scale="none", density.info = "none", margins = c(15,10), cexRow = 0.5, Rowv = FALSE, Colv = FALSE, dendrogram = "none")
-dev.off()
 
 sig_res <- de_res %>% filter(padj<0.05 & pct_diff>10 & logFC>0.1)
 saveRDS(sig_res, file="Res_wilcoxauc_adult_chip_non_proli_GC_cluster_markers.rds")
-top_res <- sig_res %>% group_by(group) %>% top_n(wt=pct_diff, 10)
-deg_res <- list("sig_res"=sig_res, "top_res"=top_res)
-saveRDS(deg_res, file="Res_wilcoxauc_adult_chip_non_proli_GC_cluster_marker_list.rds")
-genes <- unique(top_res$feature)
-expr_mat <- cluster_expr[genes,]
-dim(expr_mat)
-# generate heatmap of top cluster marker expression
-res <- prepareTreeAndHeatmapInput(expr.mat = expr_mat, hc.method = "ward.D2")
-saveRDS(res, file="Res_non_proli_GC_cluster_top10_marker_expr_heatmap_input.rds")
-pdf("Plot_heatmap_non_proli_GC_cluster_top10_marker_expr.pdf", height=10)
-gplots::heatmap.2(res$heatmap_input, col = beach.col.heatmap, trace="none", scale="none", density.info = "none", margins = c(15,10), cexRow = 0.5, Rowv = FALSE, Colv = FALSE, dendrogram = "none")
+
+# get average gene expression across different regions
+ave_expr <- getAveExpr(seu.obj=chip_gc, feature.to.calc = "region", colname.prefix = NULL)
+saveRDS(ave_expr, file="Dat_non_proli_GC_region_average_expr.rds")
+
+ave_expr <- readRDS("Dat_non_proli_GC_region_average_expr.rds")
+#cm <- readRDS("/Volumes/pred/ihb-g-deco/USERS/yuq22/Bacteria_TRM/epithelium_only/exclude_foregut_and_IleColMixed_samples/goblet_cells/Res_wilcoxauc_adult_chip_non_proli_GC_cluster_markers.rds")
+cm <- readRDS("~/Bacteria_TRM/epithelium_only/exclude_foregut_and_IleColMixed_samples/goblet_cells/Res_wilcoxauc_adult_chip_non_proli_GC_cluster_markers.rds")
+
+# get top 20 genes
+top_res <- cm %>% group_by(group) %>% top_n(20, wt=logFC)
+top_genes <- unique(top_res$feature)
+
+highlight_genes <- c("MUC5B", "TRPA1", "CLCA1", "MUC4", "MUC12","BTNL8", "REG4","TM4SF4")
+genes <- union(top_genes, highlight_genes)
+expr_mat <- ave_expr[genes,]
+res <- prepareTreeAndHeatmapInput(expr.mat = expr_mat, hc.method = "ward.D2", genes.to.highlight = highlight_genes, norm.method = "quantile")
+saveRDS(res, file="Res_adult_chip_GC_cluster_marker_gene_plus_selected_gene_expr_heatmap_input.rds")
+pdf("Plot_heatmap_adult_chip_GC_cluster_marker_gene_plus_selected_gene_expr.pdf", height=10)
+gplots::heatmap.2(res$highlight_input, col = beach.col.heatmap, trace="none", scale="none", density.info = "none", margins = c(15,10), cexRow = 0.2, cexCol=1, Rowv = FALSE, Colv = FALSE, dendrogram = "none")
 dev.off()
 
-# compare the two set of genes
-genes1 <- unique(deg_res$top_res$feature)
+hc <- hclust(as.dist(1-cor(expr_mat)), method="ward.D2")
+saveRDS(hc, file="Res_hc_adult_chip_GC_cluster_marker_gene_plus_selected_gene_expr.rds")
+pdf("Plot_hc_adult_chip_GC_cluster_marker_gene_plus_selected_gene_expr.pdf")
+plot(hc, hang=-1)
+dev.off()
+
 
 # plot the region composition per cluster
 cluster_order <- sapply(hc_res$labels[hc_res$order], function(x){
