@@ -210,7 +210,91 @@ plotFeature(seu.obj=chip_data, dr="umap", genes.to.plot=genes, do.plot=T, plot.n
 plotFeature(seu.obj=tissue_obj, dr="umap", genes.to.plot=genes, do.plot=T, plot.name="Plot_UMAPCSS_adult_tissue_for_duo_ent_subtype_markers.png", nCols=beach.col, per.plot.size=2000, cex=5, col.num=5)
 
 
-# stem cell to enterocyte trajectory for 
+# resolve stem cells and absorptive cells
+cells <- colnames(chip_data)[which(chip_data$Coarse_grain_cell_type%in%c("Colon_Ent", "Colon_SC", "Prox_SI_Ent", "Dist_SI_Ent", "Prox_SI_SC"))]
+seu_obj <- subset(chip_data, cells=cells)
+SCpubr::do_DimPlot(seu_obj)
+seu_obj <- FindVariableFeatures(seu_obj, selection.method = "vst", nfeatures = 3000)
+seu_obj <- ScaleData(object = seu_obj, verbose = T)
+seu_obj <- RunPCA(object = seu_obj, features = VariableFeatures(seu_obj), verbose = F, npcs = 50)
+usefulPCs <- 1:20
+seu_obj <- FindNeighbors(object = seu_obj, dims = usefulPCs)
+seu_obj <- FindClusters(object = seu_obj, resolution = 0.5)
+seu_obj <- RunUMAP(object = seu_obj, dims = usefulPCs)
+p1 <- SCpubr::do_DimPlot(seu_obj, group.by="Coarse_grain_cell_type", label=T, pt.size=3, label.size=10, font.size=30, legend.icon.size = 10, legend.nrow=2)
+p2 <- SCpubr::do_DimPlot(seu_obj, group.by="RNA_snn_res.0.5", label=T, pt.size=3, label.size=10, font.size=30, legend.icon.size = 10, legend.nrow=2)
+saveRDS(seu_obj, file="Res_all_region_absorptive_and_stem_cells_merged_obj.rds")
+
+anchor_genes <- c("LGR5","SMOC2","ASCL2")
+ref_pattern <- colSums(t(scale(t(as.matrix(seu_obj@assays$RNA@data[anchor_genes,])))))
+cor_vec <- cor(t(as.matrix(seu_obj@assays$RNA@data[VariableFeatures(seu_obj),])), ref_pattern)[,1]
+genes <- names(sort(cor_vec, decreasing = T)[1:10])
+plotFeature(seu.obj=chip_data, dr="umap", genes.to.plot=genes, col.num=5, do.plot=T, plot.name="Plot_UMAP_stem_marker_feature_plot.png", nCols=beach.col, per.plot.size=2000, cex=10)
+seu_obj$expr_based_stem_score <- colSums(t(scale(t(as.matrix(seu_obj@assays$RNA@data[genes,])))))
+SCpubr::do_FeaturePlot(seu_obj, feature="expr_based_stem_score", pt.size=5, order=T)
+score2 <- seu_obj$expr_based_stem_score
+score2 <- score2[which(score2>0)]
+plot(sort(score2), seq(length(score2)), pch=16)
+cutoff2 <- quantile(score2, 0.6)
+abline(v=cutoff2, col="red")
+stem_cells <- colnames(seu_obj)[which(seu_obj$expr_based_stem_score>cutoff2)]
+coor <- Embeddings(chip_data, reduction = "umap")[colnames(seu_obj),]
+seu_obj[["full_umap"]] <- CreateDimReducObject(embeddings = coor, key="FULLUMAP_", assay=DefaultAssay(seu_obj))
+p1 <- SCpubr::do_DimPlot(seu_obj, cells.highlight=TA_cells, pt.size=5, reduction="full_umap")+NoLegend()
+p2 <- SCpubr::do_DimPlot(seu_obj, cells.highlight=stem_cells, pt.size=5, reduction="full_umap")+NoLegend()
+p1/p2
+
+ct_vec <- setNames(rep("Absorptive", ncol(seu_obj)), colnames(seu_obj))
+ct_vec[stem_cells] <- "Stem"
+seu_obj$score_based_cell_type_annotation <- ct_vec
+SCpubr::do_DimPlot(seu_obj, reduction="full_umap", group.by="score_based_cell_type_annotation", pt.size=5, label=T, label.size=10, font.size=30, legend.icon.size = 10)
+
+# smooth the annotation to the cluster level
+seu_obj <- FindClusters(object = seu_obj, resolution = 5)
+n1 <- sapply(sort(unique(seu_obj$score_based_cell_type_annotation)), function(x){
+    sapply(sort(unique(seu_obj$RNA_snn_res.5)), function(y){
+        sum(seu_obj$RNA_snn_res.5==y & seu_obj$score_based_cell_type_annotation==x)
+    })
+})
+rownames(n1) <- paste0("C", sort(unique(seu_obj$RNA_snn_res.5)))
+stem_cell_cl <- sub("C", "", rownames(n1)[which(n1[,"Stem"] > n1[,"Absorptive"])])
+seu_obj$extended_score_based_cell_type_annotation  <- seu_obj$score_based_cell_type_annotation
+seu_obj$extended_score_based_cell_type_annotation[which(seu_obj$RNA_snn_res.5%in%stem_cell_cl)] <- "Stem"
+SCpubr::do_DimPlot(seu_obj, reduction="full_umap", group.by="extended_score_based_cell_type_annotation", pt.size=5, label=F, label.size=10, font.size=30, legend.icon.size = 10)
+
+seu_obj$lineage <- NA
+lineages <- list(
+    "proxSI"=c("Prox_SI_Ent","Prox_SI_SC"),
+    "distSI"=c("Dist_SI_Ent"),
+    "colon"=c("Colon_Ent","Colon_SC")
+)
+for(x in names(lineages)){
+    seu_obj$lineage[which(seu_obj$Coarse_grain_cell_type%in%lineages[[x]])] <- x
+}
+seu_obj$stem_cell_absorptive_lineage <- paste(seu_obj$extended_score_based_cell_type_annotation, seu_obj$lineage, sep="@")
+SCpubr::do_DimPlot(seu_obj, group.by="stem_cell_absorptive_lineage", pt.size=5, label=T, label.size=10, font.size=30, legend.icon.size = 10)
+saveRDS(seu_obj, file="Res_all_region_absorptive_and_stem_cells_merged_obj.rds")
+
+# update the chip data annotation baesd on the stem cell score
+chip_data$Updated_cell_type_annotation <- chip_data$Coarse_grain_cell_type
+chip_data@meta.data[colnames(seu_obj), "Updated_cell_type_annotation"] <- seu_obj$stem_cell_absorptive_lineage
+SCpubr::do_DimPlot(chip_data, group.by="Updated_cell_type_annotation", pt.size=2, label=T, label.size=10, font.size=30, legend.icon.size = 10)
+# unique the stem cell and absorptive cell annotation
+name_pairs <- list(
+    "Absorptive@colon"="Colonocyte",
+    "Absorptive@distSI"="Dist_SI_Ent",
+    "Absorptive@proxSI"= "Prox_SI_Ent",
+    "Stem@colon" =  "Colon_SC",     
+    "Stem@distSI" =  "Dist_SI_SC",      
+    "Stem@proxSI" = "Prox_SI_SC"
+)
+for(x in names(name_pairs)){
+    chip_data$Updated_cell_type_annotation[which(chip_data$Updated_cell_type_annotation==x)] <- name_pairs[[x]]
+}
+saveRDS(chip_data, file="Res_chip_data_with_updated_cell_type_annotation.rds")
+saveRDS(chip_data, file="/home/yuq22/Bacteria_TRM/used_object/Res_adult_chip_with_updated_cell_type_annotation.rds")
+
+
 # load  tissue data
 tissue_data <- readRDS("/home/yuq22/Bacteria_TRM/used_object/Res_combined_adult_human_epi_with_CSS_ct_anno_updated.rds")
 SCpubr::do_FeaturePlot(tissue_data, reduction="umap_css", feature="MUC5B", order=T, pt.size=4)
