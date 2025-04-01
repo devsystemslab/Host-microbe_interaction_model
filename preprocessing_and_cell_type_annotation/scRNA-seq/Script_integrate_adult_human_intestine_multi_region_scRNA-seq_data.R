@@ -406,60 +406,31 @@ plotFeature(seu.obj=paneth_obj, genes.to.plot=genes, dr="umap_css", plot.name="P
 cells <- colnames(css)[which(css$Cell_type=="Paneth" & css$RNA_snn_res.1==16)]
 SCpubr::do_DimPlot(paneth_obj, reduction = "umap_css", pt.size=4, border.size = 2, label=T, label.size=10, font.size=30, legend.icon.size=10, cells.highlight=cells)
 
-# try CSS stratified on region per individual # for some reason, with the CSS integration, the guttuber data is not well integrated
-#setwd("/home/yuq22/Bacteria_TRM/intestine_multi_region_scRNA-seq_atlas/css_region_by_individual")
-#library(Seurat)
-#library(dplyr)
-#library(ggplot2)
-#
-## Load the data
-#combined <- readRDS("/home/yuq22/ihb-intestine-evo/adult_primate_intestine_atlas/primate_duo/analysis/public_human/intestine_multi_region_scRNA-seq_atlas/Res_combined_adult_human_epi_with_CSS_ct_anno_updated.rds")
-#combined$Region_per_individual <- combined$orig.ident
-#combined$Region_per_individual[which(combined$paper=="gut_cell_atlas")] <- paste(combined$Sample.name[which(combined$paper=="gut_cell_atlas")], combined$Unified_region_code[which(combined$paper=="gut_cell_atlas")], sep="_")
-#combined$Region_per_individual[which(combined$paper=="Burclaff")] <- combined$orig.ident[which(combined$paper=="Burclaff")]
-#combined$Region_per_individual[which(combined$paper=="guttuber")] <- paste0(combined$Region_per_individual[which(combined$paper=="guttuber")], "_DUO")
-#saveRDS(combined, file="Res_combined_adult_enteroid_and_tissue_data_before_integration.rds")
-#
-#sample_size <- sort(table(combined$Region_per_individual))
-## filter out samples with less than 30 cells (requried for CCA integration)
-#selected_samples <- names(sample_size)[which(sample_size>=30)]
-#combined_sub <- subset(combined, cells=colnames(combined)[which(combined$Region_per_individual%in%selected_samples)])
-#
-#bk <- combined 
-#combined <- combined_sub
-#seu_obj_list <- SplitObject(combined, split.by = "Region_per_individual")
-#selected_hvg <- SelectIntegrationFeatures(
-#  seu_obj_list,
-#  nfeatures = 3000,
-#  fvf.nfeatures = 3000
-#)
-#combined <- FindVariableFeatures(object = combined, selection.method = "vst", nfeatures = 3000)
-#VariableFeatures(combined) <- selected_hvg
-#combined <- ScaleData(object = combined, verbose = T)
-#combined <- RunPCA(object = combined, features = VariableFeatures(combined), verbose = F, npcs = 50)
-#usefulPCs <- 1:20
-#combined <- FindNeighbors(object = combined, dims = usefulPCs)
-#combined <- FindClusters(object = combined, resolution = 1)
-#combined <- RunUMAP(object = combined, dims = usefulPCs)
-#combined$RNA_PCA_snn_res.1 <- combined$RNA_snn_res.1
-#saveRDS(combined, file="Res_combined_adult_tissue_no_batch_effect_correction.rds")
-#
-## CSS integration
-#combined <- readRDS("Res_combined_adult_tissue_no_batch_effect_correction.rds")
-#sample_size <- sort(table(combined$Region_per_individual))
-#css <- simspec::cluster_sim_spectrum(combined, label_tag = "Region_per_individual", cluster_resolution = 0.6, merge_spectrums = F, verbose = T, return_seuratObj = TRUE)
-#css <- RunUMAP(css, reduction = "css", dims = 1:ncol(css@reductions$css@cell.embeddings), reduction.name = "umap_css", reduction.key = "UMAPCSS_")
-#css <- FindNeighbors(object = css, reduction = "css", dims = 1:ncol(css@reductions$css@cell.embeddings), force.recalc = T) %>%
-#  FindClusters(resolution = 1)
-#css[[paste0("RNA_CSS_snn_res.", 0.2*5)]] <- css[[paste0("RNA_snn_res.", 0.2*5)]]
-#saveRDS(css, file="Res_combined_adult_human_epi_with_CSS.rds")
-#
-#p1 <- SCpubr::do_DimPlot(css, reduction = "umap_css", group.by = "Unified_region_code", pt.size=4, border.size = 2, label=T, label.size=10, font.size=30, legend.icon.size=10)
-#p2 <- SCpubr::do_DimPlot(css, reduction = "umap_css", group.by = "Unified_coarse_cell_type", pt.size=4, border.size = 2, label=T, label.size=10, font.size=30, legend.icon.size=10)
-#p3 <- SCpubr::do_DimPlot(css, reduction = "umap_css", group.by = "RNA_CSS_snn_res.1", pt.size=4, border.size = 2, label=T, label.size=10, font.size=30, legend.icon.size=10)
-#p4 <- SCpubr::do_DimPlot(css, reduction = "umap_css", group.by = "paper", pt.size=4, border.size = 2, label=T, label.size=10, font.size=30, legend.icon.size=10)
-#png("Plot_UMAP_CSS_adult_intestine_tissue_epi.png", width=2000*2, height=2000*2)
-#(p1+p2)/(p3+p4)
-#dev.off()
-#
-## 
+# subset to stem cell to colonocyte trajectory cells that are observed in both papers
+cl_to_exclude <- c(3, 11, 14,15,16,17,18,19,20, 22, 23)
+ct_to_include <- c("non-SmallInt TA", "Colonocyte" , "non-SmallInt stem cell")
+s2e <- subset(seu_obj, cells=colnames(seu_obj)[which(seu_obj$Unified_coarse_cell_type %in% ct_to_include & !seu_obj$RNA_CSS_snn_res.1 %in% cl_to_exclude)])
+p5 <- SCpubr::do_DimPlot(s2e, reduction="umap_css", group.by="RNA_CSS_snn_res.1", pt.size=2.5, border.size=1.5, label=T)+NoLegend()
+p6 <- SCpubr::do_FeaturePlot(s2e, reduction="umap_css", features="MUC2", pt.size=2.5, border.size=1.5, order=T)
+seu_obj_list <- SplitObject(s2e, split.by = "Region_per_individual")
+selected_hvg <- SelectIntegrationFeatures(
+  seu_obj_list,
+  nfeatures = 3000,
+  fvf.nfeatures = 3000
+)
+s2e <- FindVariableFeatures(object = s2e, selection.method = "vst", nfeatures = 3000)
+VariableFeatures(s2e) <- selected_hvg
+s2e <- ScaleData(object = s2e, verbose = T)
+s2e <- RunPCA(object = s2e, features = VariableFeatures(s2e), verbose = F, npcs = 50)
+usefulPCs <- 1:20
+s2e <- FindNeighbors(object = s2e, dims = usefulPCs)
+s2e <- FindClusters(object = s2e, resolution = 1)
+s2e <- RunUMAP(object = s2e, dims = usefulPCs)
+s2e$RNA_PCA_snn_res.1 <- s2e$RNA_snn_res.
+# CSS integration
+s2e <- simspec::cluster_sim_spectrum(s2e, label_tag = "Region_per_individual", cluster_resolution = 0.6, merge_spectrums = F, verbose = T, return_seuratObj = TRUE)
+s2e <- RunUMAP(s2e, reduction = "css", dims = 1:ncol(s2e@reductions$css@cell.embeddings), reduction.name = "umap_css", reduction.key = "UMAPCSS_")
+s2e <- FindNeighbors(object = s2e, reduction = "css", dims = 1:ncol(s2e@reductions$css@cell.embeddings), force.recalc = T) %>%
+  FindClusters(resolution = 0.4)
+s2e[[paste0("RNA_CSS_snn_res.", 0.2*2)]] <- s2e[[paste0("RNA_snn_res.", 0.2*2)]]
+saveRDS(s2e, file="Res_colon_s2e_adult_human_epi_with_CSS.rds")
