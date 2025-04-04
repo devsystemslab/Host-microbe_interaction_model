@@ -429,6 +429,7 @@ sig_term_per_cluster <- lapply(seq(ncol(sig_padj_mat)), function(j){
 })
 names(sig_term_per_cluster) <- colnames(sig_padj_mat)
 
+cluster_expr <- getAveExpr(seu.obj=chip_gc, feature.to.calc="RNA_snn_res.1", sep="")
 sig_res$group <- paste0("C", sig_res$group)
 score_mat <- c()
 id_vec <- c()

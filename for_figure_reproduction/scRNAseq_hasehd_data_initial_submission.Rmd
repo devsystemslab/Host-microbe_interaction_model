@@ -1,0 +1,866 @@
+---
+title: "scRNAseq_analysis_RLS_initial_submission"
+output: html_document
+date: "2025-03-29"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+This script contains the code used to generate the following plots:
+- Fig. 1l
+- Extended Data Fig. 4b,c,d,i,j
+- Extended Data Fig. 9n
+
+
+
+
+#Load libraries
+```{r}
+
+library(Seurat)
+library(scales)
+library(ggplot2)
+library(tidyverse)
+library(SCpubr)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot )
+library(patchwork)
+library(stringr)
+library(viridis)
+library(KEGGREST)
+library(reshape2)
+library(pheatmap)
+library(data.table)
+library(Matrix)
+library(grid)
+library(gridExtra)
+library(RColorBrewer)
+library(clustree)
+library(msigdbr)
+```
+
+
+
+
+Load the hashed data and do feature plots:
+
+```{r}
+#load object
+seurat_Epithelium<- readRDS("")
+
+#Dimplots
+DimPlot(seurat_Epithelium, group.by ="region_id" ,label = TRUE, pt.size = 1)
+
+#Gene featureplots
+FeaturePlot(seurat_Epithelium, c("MUC2"), order = T, pt.size = 1, split.by = "orig.ident")
+VlnPlot(seurat_Epithelium, c( "MUC2"), group.by = "Coarse_grain_cell_type", pt.size = 1)
+
+#using SCpubr
+SCpubr::do_FeaturePlot(sample = seurat_Epithelium, 
+                            #cells.highlight = cells.plot, 
+                            features = c("MUC2"), pt.size = 1, order=T)
+```
+
+
+
+--------------------------------------------------------------------------------
+EECs plots - hormone by region - Extended Data Fig. 4i,j
+---------------------------------------------------------------------------------
+
+```{r, fig.width=4}
+#subset the cluster of EEC
+Idents(seurat_Epithelium) <- "Coarse_grain_cell_type"
+seurat_EEC <- subset(seurat_Epithelium, idents = "EEC")
+genes <- c("NEUROG3", "CHGA", "TPH1",
+           "GHRL", "MLN", "SST","GIP","CCK","GCG","PYY")
+
+# Create the DotPlot
+p1 <- SCpubr::do_DotPlot(sample = seurat_EEC, 
+                        features = genes, dot.scale = 7, group.by = "region_id")
+# Customize the color scale
+p1 <- p1 + scale_fill_viridis_c(option = "inferno", direction = -1)
+# Display the plot
+p1
+
+ggsave("p1.pdf",plot = p,width = 8, height = 3)
+```
+
+Next, generate subclusters
+```{r, fig.height=3.5, fig.width=3.5}
+#subcluster the EECs
+seurat_EEC <- NormalizeData(seurat_EEC)
+seurat_EEC <- FindVariableFeatures(seurat_EEC)
+seurat_EEC <- ScaleData(seurat_EEC)
+seurat_EEC <- RunPCA(seurat_EEC)
+seurat_EEC <- FindNeighbors(seurat_EEC, dims = 1:20)
+seurat_EEC <- FindClusters(seurat_EEC, resolution = 1)
+seurat_EEC <- RunUMAP(seurat_EEC, dims = 1:10)
+
+#Select color
+col <- c( "Colon" = "#008B5C" ,"Dist_SI" = "#A0CBE8", "Prox_SI" = "#21618C" )
+p <- SCpubr::do_DimPlot(sample = seurat_EEC, pt.size = 2, group.by = "region", colors.use = col) 
+p
+
+#feature plots
+genes <- c("NEUROG3", "CHGA", "TPH1",
+           "GHRL", "MLN", "SST","GIP","CCK","GCG","PYY")
+
+#relabel based on module scores
+eec_markers <- list(
+     EC = c("TPH1"),
+     MX = c("GHRL", "MLN"),
+     K = c("GIP"),
+     L = c("PYY", "GCG"),
+     D = c("SST"),
+     I = c("CCK"),
+     Prog. = c("NEUROG3"))
+
+
+# Define a threshold for module scores
+threshold <- 0.1 # Adjust this value based on your data
+
+
+# Add module scores to the Seurat object
+seurat_EEC <- AddModuleScore(seurat_EEC, features = eec_markers, name = "EEC_Subtype")
+
+# Initialize a new metadata column for EEC subtypes with "EEC_Unassigned"
+seurat_EEC$EEC_subtype <- "EEC_Unassigned"
+
+# Initialize a vector to store the maximum scores for each cell
+max_scores <- rep(-Inf, nrow(seurat_EEC@meta.data))
+
+# Loop through each subtype and update the EEC_subtype based on the highest score
+for (subtype in names(eec_markers)) {
+  score_col <- paste0("EEC_Subtype", which(names(eec_markers) == subtype))
+  
+# Update the EEC_subtype only if the current score is higher than the previous maximum score and above the threshold
+  higher_score_indices <- seurat_EEC[[score_col]] > max_scores & seurat_EEC[[score_col]] > threshold
+  seurat_EEC$EEC_subtype[higher_score_indices] <- subtype
+  max_scores[higher_score_indices] <- seurat_EEC[[score_col]][higher_score_indices]
+}
+
+# Visualize the results
+SCpubr::do_DimPlot(sample = seurat_EEC, pt.size = 2, group.by = "EEC_subtype", label = FALSE, label.box = FALSE, repel = FALSE)
+
+#dotplot
+# Specify the desired order of EEC subtypes
+desired_order <- c("Prog.", "EC", "MX", "D", "K","I", "L", "EEC_Unassigned")  # Replace with your actual subtypes
+seurat_EEC$EEC_subtype <- as.factor(seurat_EEC$EEC_subtype)
+# Reorder the factor levels in the metadata
+seurat_EEC$EEC_subtype <- factor(seurat_EEC$EEC_subtype, levels = desired_order)
+# Create the DotPlot
+p1 <- SCpubr::do_DotPlot(sample = seurat_EEC, 
+                        features = genes, dot.scale = 8.5, group.by = "EEC_subtype")
+# Customize the color scale
+p1 <- p1 + scale_fill_viridis_c(option = "inferno", direction = -1)
+# Display the plot
+p1
+
+
+ggsave("EEC_dotplot.pdf",plot = p1,width = 9, height = 5)
+```
+
+
+Calculate Proportions of each region for each subtype
+```{r}
+# Extract metadata
+metadata <- seurat_EEC@meta.data
+
+# Calculate proportions
+proportions <- metadata %>%
+  group_by(EEC_subtype, region) %>%
+  summarise(count = n()) %>%
+  group_by(EEC_subtype) %>%
+  mutate(proportion = count / sum(count))
+
+
+colCLs <- c("#008B5C" ,"#A0CBE8", "#21618C" )
+# Plot the data
+ggplot(proportions, aes(y = EEC_subtype, x = proportion, fill = region)) +
+  geom_bar(stat = "identity", position = "stack", color = "black") +
+  labs(title = "Proportion of Regions per EEC Subtype",
+       x = "Proportion",
+       y = "EEC Subtype") +
+  theme_classic() +
+  theme(
+    axis.title.y = element_text(),
+    axis.text.y = element_text(),
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5)
+  ) +
+  scale_fill_manual(values = colCLs)
+
+ggsave("EEC_proportions.pdf")
+```
+
+Calculate proportions per subtype per region
+```{r}
+# Calculate counts for each subtype within each region_id
+counts <- metadata %>%
+  group_by(region, EEC_subtype) %>%
+  summarise(count = n(), .groups = 'drop')
+
+# Calculate the proportion of each subtype within each region_id
+proportions <- counts %>%
+  group_by(region) %>%
+  mutate(proportion = count / sum(count))
+
+# Calculate average proportions for each region
+average_proportions <- proportions %>%
+  group_by(region, EEC_subtype) %>%
+  summarise(avg_proportion = mean(proportion), .groups = 'drop')
+
+# Ensure proportions sum 1 within each region
+average_proportions <- average_proportions %>%
+  group_by(region) %>%
+  mutate(total_proportion = sum(avg_proportion)) %>%
+  ungroup()
+
+# Define colors for regions
+colCLs <- c( "#FDD884" ,"#7BCAA4"  , "#A4D371","#197636"   , "#4DA7B0","#5E4FA2","#A84798" , "#AB99CF" , "#CA6778")
+
+# Plot the data
+p4 <- ggplot(average_proportions, aes(y = region, x = avg_proportion, fill = EEC_subtype)) +
+  geom_bar(stat = "identity", position = "stack", color = "black") +
+  labs(title = "Average Proportion within regions for EEC Subtype",
+       x = "Average Proportion",
+       y = "Region") +
+  theme_classic() +
+  theme(
+    axis.title.y = element_text(),
+    axis.text.y = element_text(),
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5)
+  ) +
+  scale_fill_manual(values = colCLs)
+p4
+
+# Save the plot
+ggsave("EEC_average_proportions.pdf", plot = p4, width = 9, height = 5)
+```
+
+
+---------------------------------------------------------------------------------
+Proportions per cluster - Extended Data Fig. 4b,c
+---------------------------------------------------------------------------------
+
+```{r, fig.width=10}
+# Setup color palette
+colCls <- c("#21618C" ,"#2E86C1" ,"#A0CBE8" , "#138d75" ,"#196f3d" ,"#17A589", "#008B5C")
+colCls2 <- c( "#FDD884" ,"#7BCAA4"  , "#A4D371","#197636"   , "#4DA7B0","#5E4FA2","#A84798" , "#AB99CF" , "#CA6778"  )
+colCls2 <- c("#4DA7B0","#197636" ,"#FDD884" ,"#7BCAA4","#A4D371","#A84798" , "#AB99CF" , "#CA6778" ,"#5E4FA2" )
+
+#rearrange the order of the samples for plots
+seurat_Epithelium$region_id_ordered <- factor(seurat_Epithelium$region_id, levels = c("Prox_SI_1", "Prox_SI_2", "Dist_SI_1", "Colon_1", "Colon_2", "Colon_3", "Colon_4"))
+#rearrange the order of the samples for plots
+seurat_Epithelium$Updated_cell_type_annotation_ordered <- factor(seurat_Epithelium$Updated_cell_type_annotation, levels = c("Goblet","EEC","Colonocyte", "Dist_SI_Ent", "Prox_SI_Ent","Colon_SC","Dist_SI_SC","Prox_SI_SC", "TA"))
+seurat_Epithelium$Region_ordered <- factor(seurat_Epithelium$region, levels = c("Prox_SI","Dist_SI","Colon"))
+
+
+#proportion of cells per donor
+ggData = data.frame(prop.table(table(seurat_Epithelium$region_id_ordered, seurat_Epithelium$Updated_cell_type_annotation_ordered), margin = 1))
+colnames(ggData) = c("label", "region_id_ordered", "value")
+p1 <- ggplot(ggData, aes(label, value, fill = region_id_ordered)) +
+  geom_col() + xlab("region_id_ordered") + ylab("Proportion of Cells (%)") +
+  scale_fill_manual(values = colCls2)  + coord_flip() 
+p1
+
+#cell count per donor
+ggData = data.frame(table(seurat_Epithelium$region_id_ordered, seurat_Epithelium$region_id_ordered))
+colnames(ggData) = c("label", "region_id_ordered", "value")
+p2 <- ggplot(ggData, aes(region_id_ordered, value, fill = label)) +
+  geom_col() + xlab("region_id_ordered") + ylab("Cell Number") +
+  scale_fill_manual(values = colCls) 
+p2
+
+ggsave("p2.pdf",plot = p2,width = 7, height = 4)
+
+# Extract metadata
+metadata <- seurat_Epithelium@meta.data
+# Proportion per region (adding all cell types of each region together)
+proportions <- metadata %>%
+  group_by(Updated_cell_type_annotation_ordered, region) %>%
+  summarise(count = n()) %>%
+  group_by(region) %>%
+  mutate(proportion = count / sum(count))
+
+
+colCls2 <- c("#4DA7B0","#197636" ,"#FDD884" ,"#7BCAA4","#A4D371","#A84798" , "#AB99CF" , "#CA6778" ,"#5E4FA2" )
+# Plot the data
+p3 <- ggplot(proportions, aes(y = region, x = proportion, fill = Updated_cell_type_annotation_ordered)) +
+  geom_bar(stat = "identity", position = "stack", color = "black") +
+  labs(title = "Proportion of cell types within region",
+       x = "Proportion",
+       y = "Region") +
+  theme_classic() +
+  theme(
+    axis.title.y = element_text(),
+    axis.text.y = element_text(),
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5)
+  ) +
+  scale_fill_manual(values = colCls2)
+
+p3
+ggsave("p3.pdf",plot = p3,width = 12, height = 3)
+
+```
+
+
+---------------------------------------------------------------------------------
+Gene Ontology - Extended Data Fig. 4d
+---------------------------------------------------------------------------------
+
+GO with presto package
+```{r, fig.height=6}
+#load libraries
+library(dplyr)
+library(presto)
+#pull top cluster markers - max500 
+cl_markers_presto <- wilcoxauc(seurat_Epithelium, group_by = "Updated_cell_type_annotation")
+pulled_genes <-cl_markers_presto %>%
+    filter(logFC > log(1.1) & pct_in > 5 & padj < 0.05) %>%
+    group_by(group) %>%
+    arrange(desc(logFC), .by_group=T) %>%
+    slice_head(n = 500)
+
+# Extract gene lists for enterocytes and colonocytes
+#Duodenum
+enterocyte_genes <- pulled_genes %>%
+    filter(group == "Prox_SI_Ent") %>%
+    pull(feature)
+#transform the nomenclature to entrez ids
+enterocyte_genes <- bitr(enterocyte_genes, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+enterocyte_genes <- enterocyte_genes$ENTREZID
+
+#Ileum
+enterocyte_dist_genes <- pulled_genes %>%
+    filter(group == "Dist_SI_Ent") %>%
+    pull(feature)
+#transform the nomenclature to entrez ids
+enterocyte_dist_genes <- bitr(enterocyte_dist_genes, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+enterocyte_dist_genes <- enterocyte_dist_genes$ENTREZID
+
+#Colon
+colonocyte_genes <- pulled_genes %>%
+    filter(group == "Colonocyte") %>%
+    pull(feature)
+#transform the nomenclature to entrez ids
+colonocyte_genes <- bitr(colonocyte_genes, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+colonocyte_genes <- colonocyte_genes$ENTREZID
+
+
+
+
+# Get the raw counts matrix from the Seurat object
+counts_matrix <- GetAssayData(seurat_Epithelium, slot = "counts")
+# Filter genes based on the condition that they must have counts > 1 in at least one cell
+detected_genes <- rownames(counts_matrix)[rowSums(counts_matrix > 1) > 0]
+# Print the number of detected genes
+length(detected_genes)
+#Transform to entrez ids
+detected_genes_entrez <- bitr(detected_genes, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+detected_genes_entrez_ids <- detected_genes_entrez$ENTREZID
+
+
+# Check if the genes for each part are found in the background genes
+common_genes <- enterocyte_genes  %in% detected_genes_entrez_ids
+print(sum(common_genes))
+common_genes <- enterocyte_dist_genes  %in% detected_genes_entrez_ids
+print(sum(common_genes))
+common_genes <- colonocyte_genes  %in% detected_genes_entrez_ids
+print(sum(common_genes))
+```
+
+Perform enrichGO
+
+```{r, fig.height=6}
+# Perform the BF enrichment analysis using the custom background. Get all terms first
+result_bf_prox <- enrichGO(gene = enterocyte_genes,
+                universe = detected_genes_entrez_ids,
+                OrgDb = org.Hs.eg.db,
+                ont = "BP", # Biological Process
+                pAdjustMethod = "BH",
+                pvalueCutoff = 1,
+                qvalueCutoff = 1,
+                readable = TRUE)
+result_bf_dist <- enrichGO(gene = enterocyte_dist_genes,
+                universe = detected_genes_entrez_ids,
+                OrgDb = org.Hs.eg.db,
+                ont = "BP", # Biological Process
+                pAdjustMethod = "BH",
+                pvalueCutoff = 1,
+                qvalueCutoff = 1,
+                readable = TRUE)
+result_bf_col <- enrichGO(gene = colonocyte_genes,
+                universe = detected_genes_entrez_ids,
+                OrgDb = org.Hs.eg.db,
+                ont = "BP", # Biological Process
+                pAdjustMethod = "BH",
+                pvalueCutoff = 1,
+                qvalueCutoff = 1,
+                readable = TRUE)
+
+
+# Perform the MF enrichment analysis using the custom background. Get all terms first
+result_mf_prox <- enrichGO(gene = enterocyte_genes,
+                   universe = detected_genes_entrez_ids,
+                   OrgDb = org.Hs.eg.db,
+                   ont = "MF", # Molecular Function
+                   pAdjustMethod = "BH",
+                   pvalueCutoff = 1,
+                   qvalueCutoff = 1,
+                   readable = TRUE)
+result_mf_dist <- enrichGO(gene = enterocyte_dist_genes,
+                   universe = detected_genes_entrez_ids,
+                   OrgDb = org.Hs.eg.db,
+                   ont = "MF", # Molecular Function
+                   pAdjustMethod = "BH",
+                   pvalueCutoff = 1,
+                   qvalueCutoff = 1,
+                   readable = TRUE)
+result_mf_col <- enrichGO(gene = colonocyte_genes,
+                   universe = detected_genes_entrez_ids,
+                   OrgDb = org.Hs.eg.db,
+                   ont = "MF", # Molecular Function
+                   pAdjustMethod = "BH",
+                   pvalueCutoff = 1,
+                   qvalueCutoff = 1,
+                   readable = TRUE)
+```
+
+
+Explore which terms are enriched per region - biological function
+
+```{r}
+
+# Create a unified set of GO terms for the 3 regions
+all_go_terms <- unique(c(result_bf_prox$Description, result_bf_dist$Description, result_bf_col$Description))
+
+# Initialize data frame with all GO terms
+enrichment_df <- data.frame(GO_Term = all_go_terms)
+   
+# Merge enrichment results into the unified data frame
+#duo
+enrichment_df <- merge(enrichment_df, result_bf_prox[, c("Description","pvalue", "p.adjust")], by.x = "GO_Term", by.y = "Description", all.x = TRUE)
+colnames(enrichment_df)[c(2,3)] <- c("Enterocytes_pvalue", " Enterocytes_p.adjust")
+
+#ile
+enrichment_df <- merge(enrichment_df, result_bf_dist[, c("Description","pvalue", "p.adjust")], by.x = "GO_Term", by.y = "Description", all.x = TRUE)
+colnames(enrichment_df)[c(4,5)] <- c("Enterocytes_dist_pvalue", " Enterocytes_dist_p.adjust")
+
+#col
+enrichment_df <- merge(enrichment_df, result_bf_col[, c("Description","pvalue", "p.adjust")], by.x = "GO_Term", by.y = "Description", all.x = TRUE)
+colnames(enrichment_df)[c(6,7)] <- c("Colonocytes_pvalue", " Colonocytes_p.adjust")
+
+   
+
+# Convert p-values and adj.pvalues to -log10
+enrichment_df$Enterocytes_log10pvalue <- -log10(enrichment_df$Enterocytes_pvalue)
+enrichment_df$Enterocytes_log10p.adjust <- -log10(enrichment_df$` Enterocytes_p.adjust`)
+
+enrichment_df$Enterocytes_dist_log10pvalue <- -log10(enrichment_df$Enterocytes_dist_pvalue)
+enrichment_df$Enterocytes_dist_log10p.adjust <- -log10(enrichment_df$` Enterocytes_dist_p.adjust`)
+
+enrichment_df$Colonocytes_log10pvalue <- -log10(enrichment_df$Colonocytes_pvalue)
+enrichment_df$Colonocytes_log10p.adjust <- -log10(enrichment_df$` Colonocytes_p.adjust`)
+
+
+#Calculate differential enrichment scores for pvalues
+enrichment_df$Enterocytes_vs_Others <- enrichment_df$Enterocytes_log10pvalue - rowMeans(enrichment_df[, c("Enterocytes_dist_log10pvalue" , "Colonocytes_log10pvalue")], na.rm = TRUE)
+
+enrichment_df$Enterocytes_dist_vs_Others <- enrichment_df$Enterocytes_dist_log10pvalue - rowMeans(enrichment_df[, c("Enterocytes_log10pvalue" , "Colonocytes_log10pvalue")], na.rm = TRUE)
+   
+enrichment_df$Colonocytes_vs_Others <- enrichment_df$Colonocytes_log10pvalue - rowMeans(enrichment_df[, c("Enterocytes_dist_log10pvalue" , "Enterocytes_log10pvalue")], na.rm = TRUE)
+   
+#Calculate differential enrichment scores for adjusted pvalues
+enrichment_df$Enterocytes_vs_Others <- enrichment_df$Enterocytes_log10p.adjust - rowMeans(enrichment_df[, c("Enterocytes_dist_log10p.adjust" , "Colonocytes_log10p.adjust")], na.rm = TRUE)
+
+enrichment_df$Enterocytes_dist_vs_Others <- enrichment_df$Enterocytes_dist_log10p.adjust - rowMeans(enrichment_df[, c("Enterocytes_log10p.adjust" , "Colonocytes_log10p.adjust")], na.rm = TRUE)
+   
+enrichment_df$Colonocytes_vs_Others <- enrichment_df$Colonocytes_log10p.adjust - rowMeans(enrichment_df[, c("Enterocytes_dist_log10p.adjust" , "Enterocytes_log10p.adjust")], na.rm = TRUE)
+   
+   
+#Rank by differential enrichment scores
+enrichment_df <- enrichment_df[order(-enrichment_df$Enterocytes_vs_Others), ]
+
+#Plot top terms
+top_terms <- head(enrichment_df, 30)
+ggplot(top_terms, aes(x = reorder(GO_Term, Enterocytes_vs_Others), y = Enterocytes_vs_Others)) +
+     geom_bar(stat = "identity") +
+     coord_flip() +
+     labs(title = "Top GO Terms Enriched in Enterocytes_proximal vs Others",
+          x = "GO Term",
+          y = "Differential Enrichment Score (-log10(pvalue))")
+   
+   
+# Rank by differential enrichment scores
+enrichment_df <- enrichment_df[order(-enrichment_df$Enterocytes_dist_vs_Others), ]
+
+#Plot top terms
+top_terms <- head(enrichment_df, 30)
+ggplot(top_terms, aes(x = reorder(GO_Term, Enterocytes_dist_vs_Others), y = Enterocytes_dist_vs_Others)) +
+     geom_bar(stat = "identity") +
+     coord_flip() +
+     labs(title = "Top GO Terms Enriched in Enterocytes_distal vs Others",
+          x = "GO Term",
+          y = "Differential Enrichment Score (-log10(pvalue))")
+   
+   
+#Rank by differential enrichment scores
+enrichment_df <- enrichment_df[order(-enrichment_df$Colonocytes_vs_Others), ]
+
+#Plot top terms
+top_terms <- head(enrichment_df, 30)
+ggplot(top_terms, aes(x = reorder(GO_Term, Colonocytes_vs_Others), y = Colonocytes_vs_Others)) +
+     geom_bar(stat = "identity") +
+     coord_flip() +
+     labs(title = "Top GO Terms Enriched in Colonocytes vs Others",
+          x = "GO Term",
+          y = "Differential Enrichment Score (-log10(pvalue))")
+   
+
+   
+# save it differently beofre mf
+enrichment_df_bp <- enrichment_df
+```
+
+Explore which terms are enriched per region - molecular function
+
+```{r, fig.height=7}
+
+#Create a unified set of GO terms
+all_go_terms <- unique(c(result_mf_prox$Description, result_mf_dist$Description, result_mf_col$Description))
+
+#Initialize data frame with all GO terms
+enrichment_df <- data.frame(GO_Term = all_go_terms)
+   
+#Merge enrichment results into the unified data frame
+#duo
+enrichment_df <- merge(enrichment_df, result_mf_prox[, c("Description","pvalue", "p.adjust")], by.x = "GO_Term", by.y = "Description", all.x = TRUE)
+colnames(enrichment_df)[c(2,3)] <- c("Enterocytes_pvalue", " Enterocytes_p.adjust")
+
+#ile
+enrichment_df <- merge(enrichment_df, result_mf_dist[, c("Description","pvalue", "p.adjust")], by.x = "GO_Term", by.y = "Description", all.x = TRUE)
+colnames(enrichment_df)[c(4,5)] <- c("Enterocytes_dist_pvalue", " Enterocytes_dist_p.adjust")
+
+#col
+enrichment_df <- merge(enrichment_df, result_mf_col[, c("Description","pvalue", "p.adjust")], by.x = "GO_Term", by.y = "Description", all.x = TRUE)
+colnames(enrichment_df)[c(6,7)] <- c("Colonocytes_pvalue", " Colonocytes_p.adjust")
+
+   
+
+#Convert p-values to -log10(p.adjust)
+enrichment_df$Enterocytes_log10pvalue <- -log10(enrichment_df$Enterocytes_pvalue)
+enrichment_df$Enterocytes_log10p.adjust <- -log10(enrichment_df$` Enterocytes_p.adjust`)
+
+enrichment_df$Enterocytes_dist_log10pvalue <- -log10(enrichment_df$Enterocytes_dist_pvalue)
+enrichment_df$Enterocytes_dist_log10p.adjust <- -log10(enrichment_df$` Enterocytes_dist_p.adjust`)
+   
+enrichment_df$Colonocytes_log10pvalue <- -log10(enrichment_df$Colonocytes_pvalue)
+enrichment_df$Colonocytes_log10p.adjust <- -log10(enrichment_df$` Colonocytes_p.adjust`)
+
+
+#Calculate differential enrichment scores
+enrichment_df$Enterocytes_vs_Others <- enrichment_df$Enterocytes_log10pvalue - rowMeans(enrichment_df[, c("Enterocytes_dist_log10pvalue" , "Colonocytes_log10pvalue")], na.rm = TRUE)
+
+enrichment_df$Enterocytes_dist_vs_Others <- enrichment_df$Enterocytes_dist_log10pvalue - rowMeans(enrichment_df[, c("Enterocytes_log10pvalue" , "Colonocytes_log10pvalue")], na.rm = TRUE)
+   
+enrichment_df$Colonocytes_vs_Others <- enrichment_df$Colonocytes_log10pvalue - rowMeans(enrichment_df[, c("Enterocytes_dist_log10pvalue" , "Enterocytes_log10pvalue")], na.rm = TRUE)
+   
+#Calculate differential enrichment scores for adjusted pvalues
+enrichment_df$Enterocytes_vs_Others <- enrichment_df$Enterocytes_log10p.adjust - rowMeans(enrichment_df[, c("Enterocytes_dist_log10p.adjust" , "Colonocytes_log10p.adjust")], na.rm = TRUE)
+
+enrichment_df$Enterocytes_dist_vs_Others <- enrichment_df$Enterocytes_dist_log10p.adjust - rowMeans(enrichment_df[, c("Enterocytes_log10p.adjust" , "Colonocytes_log10p.adjust")], na.rm = TRUE)
+   
+enrichment_df$Colonocytes_vs_Others <- enrichment_df$Colonocytes_log10p.adjust - rowMeans(enrichment_df[, c("Enterocytes_dist_log10p.adjust" , "Enterocytes_log10p.adjust")], na.rm = TRUE)
+   
+   
+#Rank by differential enrichment scores
+enrichment_df <- enrichment_df[order(-enrichment_df$Enterocytes_vs_Others), ]
+   
+#Select top terms
+top_terms <- head(enrichment_df, 20)
+
+#Function to wrap text
+wrap_text <- function(text, width) {
+  str_wrap(text, width = width)
+}
+
+#Apply the wrap_text function to the GO_Term column
+top_terms$GO_Term <- sapply(top_terms$GO_Term, wrap_text, width = 30)  
+#Adjust width as needed
+
+
+#Plot top terms
+top_terms <- head(top_terms, 30)
+ggplot(top_terms, aes(x = reorder(GO_Term, Enterocytes_vs_Others), y = Enterocytes_vs_Others)) +
+     geom_bar(stat = "identity") +
+     coord_flip() +
+     labs(title = "Top GO_MF Terms Enriched in Enterocytes_proximal vs Others",
+          x = "GO Term",
+          y = "Differential Enrichment Score (-log10(pvalue))")
+   
+   
+#Rank by differential enrichment scores
+enrichment_df <- enrichment_df[order(-enrichment_df$Enterocytes_dist_vs_Others), ]
+
+#Plot top terms
+top_terms <- head(enrichment_df, 30)
+ggplot(top_terms, aes(x = reorder(GO_Term, Enterocytes_dist_vs_Others), y = Enterocytes_dist_vs_Others)) +
+     geom_bar(stat = "identity") +
+     coord_flip() +
+     labs(title = "Top GO_MF Terms Enriched in Enterocytes_distal vs Others",
+          x = "GO Term",
+          y = "Differential Enrichment Score (-log10(pvalue))")
+   
+   
+#Rank by differential enrichment scores
+enrichment_df <- enrichment_df[order(-enrichment_df$Colonocytes_vs_Others), ]
+
+#Plot top terms
+top_terms <- head(enrichment_df, 30)
+ggplot(top_terms, aes(x = reorder(GO_Term, Colonocytes_vs_Others), y = Colonocytes_vs_Others)) +
+     geom_bar(stat = "identity") +
+     coord_flip() +
+     labs(title = "Top GO_MF Terms Enriched in Colonocytes vs Others",
+          x = "GO Term",
+          y = "Differential Enrichment Score (-log10(pvalue))")
+   
+#to save it
+enrichment_df_mf <- enrichment_df
+```
+
+
+Merge BF and MF and make final analysis and plots
+
+
+```{r, fig.height=10, fig.width=6}
+enrichment_df_bp$Category <- "BP"
+enrichment_df_mf$Category <- "MF"
+
+# Combine 
+enrichment_combined <- rbind(enrichment_df_bp, enrichment_df_mf)
+
+# Specify your list of GO term descriptions of interest based on previous exploration
+go_terms_of_interest <- c("monocarboxylic acid metabolic process",
+  "fatty acid metabolic process", "small molecule biosynthetic process", "iron ion homeostasis","digestion","cholesterol metabolic process","secondary metabolic process", "dipeptidase activity" ,  "xenobiotic metabolic process", "vitamin metabolic process", "monosaccharide biosynthetic process", "MHC protein complex assembly",
+
+ "monosaccharide binding", "response to decreased oxygen levels", "regulation of sodium ion transport", "L-ascorbic acid binding","regulation of peptidase activity", "hormone metabolic process","lipid transport", "lipid localization", 
+  
+  "cell adhesion molecule binding","actin binding","calcium-dependent protein binding", "cell-cell junction assembly",
+  "wound healing","carboxylic acid transport", "chloride transport", "bile acid transmembrane transporter activity",
+  "organic anion transport","inorganic anion transport","positive regulation of sodium ion transport","carbonate dehydratase activity","water homeostasis")
+
+# Filter the combined enrichment data to include only the specified GO term descriptions
+enrichment_combined_filtered <- enrichment_combined[enrichment_combined$GO_Term %in% go_terms_of_interest, ]
+
+
+# Ensure the GO_Term column is a factor with levels in the specified order
+enrichment_combined_filtered$GO_Term <- factor(enrichment_combined_filtered$GO_Term, levels = go_terms_of_interest)
+
+
+# Create a matrix for the heatmap
+heatmap_data <- data.frame(
+  GO_Term = enrichment_combined_filtered$GO_Term,
+  Enterocytes_vs_Others = enrichment_combined_filtered$Enterocytes_vs_Others,
+  Enterocytes_dist_vs_Others = enrichment_combined_filtered$Enterocytes_dist_vs_Others,
+  Colonocytes_vs_Others = enrichment_combined_filtered$Colonocytes_vs_Others
+)
+
+# Reshape the data to long format
+heatmap_data_long <- melt(heatmap_data, id.vars = "GO_Term")
+
+# Convert to matrix format
+heatmap_matrix <- dcast(heatmap_data_long, GO_Term ~ variable, value.var = "value")
+rownames(heatmap_matrix) <- heatmap_matrix$GO_Term
+heatmap_matrix <- heatmap_matrix[, -1]
+
+# Ensure the columns are in the desired order
+heatmap_matrix <- heatmap_matrix[, c("Enterocytes_vs_Others", "Enterocytes_dist_vs_Others", "Colonocytes_vs_Others")]
+
+
+
+# Calculate the minimum observed enrichment score, excluding NA values
+min_score <- min(heatmap_matrix, na.rm = TRUE)
+# Replace NA values with the minimum score
+heatmap_matrix[is.na(heatmap_matrix)] <- min_score
+
+
+
+# Create an annotation data frame for the GO term categories
+annotation_data <- data.frame(
+  Category = enrichment_combined_filtered$Category
+)
+rownames(annotation_data) <- enrichment_combined_filtered$GO_Term
+
+# Define colors for the annotation
+annotation_colors <- list(
+  Category = c(MF = "#f7f7f7", BP =  "black")
+)
+
+
+p2 <-pheatmap(heatmap_matrix, cluster_rows = FALSE, cluster_cols = FALSE, show_rownames = TRUE, show_colnames = TRUE, annotation_row = annotation_data,
+  annotation_colors = annotation_colors,
+         main = "Enriched GO terms", color = colorRampPalette(c("#0571b0", "#f7f7f7", "#ca0020" ))(100))
+
+p2
+
+ggsave("GO_enterocytes_1.pdf",plot = p2,width = 8, height = 12)
+
+```
+
+
+
+---------------------------------------------------------------------------------
+Metabolic heatmaps - Fig. 1l
+---------------------------------------------------------------------------------
+
+```{r, fig.width=20, fig.height=2.5}
+
+# Define the cluster IDs you want to subset --> enterocytes and colonocytes
+clusters_to_subset <- c("Prox_SI_Ent", "Dist_SI_Ent", "Colon_Ent")
+# Subset the Seurat object
+seurat_ent <- subset(seurat_Epithelium, subset = Coarse_grain_cell_type %in% clusters_to_subset)
+
+#Final gene list
+genes <- c("APOA4", "APOC3", "APOB","NPC1L1" , #fatty acid, lipids, cholesterol  
+            "CBR1",  "CYP2C19", "CYP3A4", "CYP2D6" , #xenobiotic   
+          "PEPD", "CPQ","DPEP1", "SLC15A1","SLC6A19" ,#peptides, aa   
+           "SI","MGAM", "SLC2A5", "SLC5A1","SLC2A1", #Mpoly and onosaccharides 
+           "CYBRD1", "FRRS1","FTL", "SLC40A1", #iron   
+         "AQP1", "AQP7",  "AQP10", "AQP11","AQP8",   #water
+          "RBP2", "SLC52A1", "SLC46A1"  ,"CUBN", #A, B2, B9, B12 
+           "FABP6", "SLC10A2","SLC51A", "SLC51B", #bile acid  
+            "FXYD5","ATP1A1", "FXYD3","SCNN1A", #sodium activity
+          
+            "CEACAM5", "CD9", "TJP3","PKP2", #cell-cell
+          "ABCC3","SLC16A1", "SLC16A9","SLC17A4", #organic anion, lactate
+           "SLC26A2", "SLC26A3","CLCA4","SLC20A1",  #anion
+           "CA12", "GUCA2A")#cyclase, pH
+
+custom_colors <- c("#ffffd1", "#41b6c4",  "#081d58" )
+
+# Extract the expression data for the desired genes
+expression_data <- FetchData(seurat_ent, vars = genes)
+
+# Extract metadata
+metadata <- seurat_ent@meta.data
+
+# Merge expression data with metadata
+expression_data$cell <- rownames(expression_data)
+metadata$cell <- rownames(metadata)
+merged_data <- merge(expression_data, metadata, by = "cell")
+
+# Calculate average expression for each gene within each region
+average_expression <- merged_data %>%
+  group_by(region) %>%
+  summarise(across(all_of(genes), mean, .names = "avg_{col}"))
+
+
+# Option 1: Normalize to the maximum value/region for these average expression values
+max_normalized_data <- average_expression %>%
+  mutate(across(starts_with("avg_"), ~ ./max(.), .names = "norm_{col}"))
+
+# Reshape data for heatmap
+max_normalized_long <- max_normalized_data %>%
+  pivot_longer(cols = starts_with("norm_"), names_to = "gene", values_to = "normalized_expression") %>%
+  mutate(gene = sub("norm_avg_", "", gene))
+
+# Ensure the gene column is a factor with levels in the order of the genes vector
+max_normalized_long$gene <- factor(max_normalized_long$gene, levels = genes)
+
+# Create heatmap
+p <- ggplot(max_normalized_long, aes(x = gene, y = region, fill = normalized_expression)) +
+  geom_tile() +
+  scale_fill_gradientn(colors = custom_colors) +  geom_tile(color = "black", size = 0.5) +
+  theme_minimal() + theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 15),  # Tilt the gene names on the x-axis
+    axis.text.y = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5)
+  ) +
+  labs(title = "Heatmap of Normalized to maximum Average Gene Expression", x = "Gene", y = "Region")
+
+# Display the heatmap
+print(p)
+
+ggsave("Genes_pathways_enterocytes.pdf",plot = p,width = 17, height = 2)
+
+```
+
+
+
+
+
+---------------------------------------------------------------------------------
+Immune heatmaps - Extended Data Fig. 9n
+---------------------------------------------------------------------------------
+
+
+```{r, fig.width=10, fig.height=2.5}
+# Define the cluster IDs you want to subset
+clusters_to_subset <- c("Prox_SI_Ent", "Dist_SI_Ent", "Colon_Ent")
+# Subset the Seurat object
+seurat_ent <- subset(seurat_Epithelium, subset = Coarse_grain_cell_type %in% clusters_to_subset)
+
+#Final gene list
+genes <- c("HLA-A", "HLA-B","HLA-C","HLA-E","HLA-F" ,"HLA-DRB1" ,
+           "HLA-DQB1",  "HLA-DMA","HLA-DRA" , 
+              "CD74", 
+           "IFNGR1","IFNGR2","IL17RA","IL22RA1","IL15RA", "ALCAM","TNFRSF14",
+            "IL15", "IL7","CCL25", 
+          "CCL28","BTNL3",
+           "BTNL8")
+
+custom_colors <- c("#ffffd1", "#41b6c4",  "#081d58" )
+
+# Extract the expression data for the desired genes
+expression_data <- FetchData(seurat_ent, vars = genes)
+
+# Extract metadata
+metadata <- seurat_ent@meta.data
+
+# Merge expression data with metadata
+expression_data$cell <- rownames(expression_data)
+metadata$cell <- rownames(metadata)
+merged_data <- merge(expression_data, metadata, by = "cell")
+
+# Calculate average expression for each gene within each region
+average_expression <- merged_data %>%
+  group_by(region) %>%
+  summarise(across(all_of(genes), mean, .names = "avg_{col}"))
+
+
+# Perform max normalization for these average expression values
+max_normalized_data <- average_expression %>%
+  mutate(across(starts_with("avg_"), ~ ./max(.), .names = "norm_{col}"))
+
+# Reshape data for heatmap
+max_normalized_long <- max_normalized_data %>%
+  pivot_longer(cols = starts_with("norm_"), names_to = "gene", values_to = "normalized_expression") %>%
+  mutate(gene = sub("norm_avg_", "", gene))
+
+# Ensure the gene column is a factor with levels in the order of the genes vector
+max_normalized_long$gene <- factor(max_normalized_long$gene, levels = genes)
+# Create heatmap
+p <- ggplot(max_normalized_long, aes(x = gene, y = region, fill = normalized_expression)) +
+  geom_tile() +
+  scale_fill_gradientn(colors = custom_colors) +  geom_tile(color = "black", size = 0.5) +
+  theme_minimal() + theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 15),  # Tilt the gene names on the x-axis
+    axis.text.y = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5)
+  ) +
+  labs(title = "Heatmap of Average Gene Expression normalized to MAX", x = "Gene", y = "Region")
+
+# Display the heatmap
+print(p)
+
+ggsave("Genes_immune_enterocytes.pdf",plot = p,width = 10, height = 2.5)
+
+```
+
